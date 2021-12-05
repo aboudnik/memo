@@ -6,33 +6,43 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class Cache {
-    static Map<Class<Class<?>>, Object> proxies = new HashMap<>();
-
-    public Object invoke(Object p, Method m, Object[] a) throws Throwable {
-        if (m.getDeclaringClass() == Object.class) {
-            return m.invoke(p, a);
-        } else {
-            return m.invoke(p, a);
-        }
-    }
+    static final Map<Class<Class<?>>, Object> PROXIES = new HashMap<>();
 
     @SuppressWarnings("unchecked")
     <P> P proxy(Class<P> clazz) {
-        return (P) proxies.computeIfAbsent((Class<Class<?>>) clazz, c -> {
-            final P proxy = getProxy(clazz);
-            return Proxy.newProxyInstance(
-                    clazz.getClassLoader(),
-                    clazz.getInterfaces(),
-                    (p, m, a) -> invoke(proxy, m, a)
-            );
-        });
+        final P proxy = newInstance(clazz);
+        return (P) PROXIES.computeIfAbsent((Class<Class<?>>) clazz,
+                c -> Proxy.newProxyInstance(
+                        clazz.getClassLoader(),
+                        clazz.getInterfaces(),
+                        (p, m, a) -> m.getDeclaringClass() == Object.class
+                                ? m.invoke(proxy, a)
+                                : invoke(proxy, m, a)
+                ));
     }
 
-    private <T> T getProxy(Class<T> clazz) {
+    private <T> T newInstance(Class<T> clazz) {
         try {
             return clazz.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
             throw new IllegalAccessError("");
         }
+    }
+
+    private Object invoke(Object p, Method m, Object[] a) throws Throwable {
+        try {
+            enter("");
+            return m.invoke(p, a);
+        } finally {
+            leave();
+        }
+    }
+
+    private void enter(String s) {
+
+    }
+
+    private void leave() {
+
     }
 }

@@ -45,7 +45,7 @@ public class Memoizer {
     private static String key(Method method, Object... args) {
         final String clazz = method.getDeclaringClass().getName();
         final String name = method.getName();
-        return GSON.toJson(Collections.singletonMap(Memoizer.isSetter(method) || Memoizer.isGetter(method)
+        return GSON.toJson(Collections.singletonMap(isSetter(method) || isGetter(method)
                 ? clazz + "." + name.substring(3)
                 : clazz + "." + name, args == null ? EMPTY : args));
     }
@@ -84,8 +84,8 @@ public class Memoizer {
                         return exec(library, m, a);
                     }
                     Object value;
-                    if (Memoizer.isSetter(m)) {
-                        final String key = Memoizer.key(m, a[0]);
+                    if (isSetter(m)) {
+                        final String key = key(m, a[0]);
                         enter(key);
                         cache.put(key, value = exec(library, m, a));
                         leave();
