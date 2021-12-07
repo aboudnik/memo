@@ -1,14 +1,13 @@
 package org.boudnik.memo;
 
-public interface Library {
+public class Library<P> {
+    protected P proxy;
 
-    double presentValue(String portfolio, String security);
+    public P setProxy(P proxy) {
+        return this.proxy = proxy;
+    }
 
-    double getMarketPrice(String security);
-
-    double setMarketPrice(String security, double value);
-
-    double holding(String portfolio, String security);
-
-    double getAmount();
+    public P library() {
+        return proxy;
+    }
 }
