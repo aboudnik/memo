@@ -4,9 +4,7 @@ public interface Portfolio {
 
     double presentValue(String portfolio, String security);
 
-    default double getMarketPrice(String security) {
-        throw new IllegalArgumentException("must be cached");
-    }
+    double getMarketPrice(String security);
 
     double setMarketPrice(String security, double value);
 

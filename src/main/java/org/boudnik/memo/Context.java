@@ -2,33 +2,84 @@ package org.boudnik.memo;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import org.jetbrains.annotations.NotNull;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.*;
+import java.util.function.Supplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
-public class Cache {
+public class Context {
     private static final Map<Class<?>, Object> PROXIES = new HashMap<>();
+    private final Dialect dialect;
+
+    static final Logger LOGGER;
+
+    static {
+        System.setProperty("java.util.logging.SimpleFormatter.format", "[%1$tF %1$tT] [%4$-7s] %5$s %n");
+        Logger rootLog = Logger.getLogger("");
+        rootLog.setLevel(Level.FINER);
+        rootLog.getHandlers()[0].setLevel(Level.FINER);
+        LOGGER = Logger.getLogger(Context.class.getName());
+    }
+
+    public Context() {
+        this(null);
+    }
+
+    public Context(Dialect dialect) {
+        this.dialect = dialect;
+    }
+
+    public Object get(String table, Object id) {
+        final Supplier<String> message = () -> String.format("data  read value from %s where id = %s", table, id);
+        try {
+            LOGGER.finer(message);
+            return dialect.get(table, id);
+        } catch (SQLException e) {
+            LOGGER.severe(e::getMessage);
+            throw new RuntimeException("fail", e);
+        }
+    }
+
+    public Object set(String table, Object id, Object value) {
+        try {
+            LOGGER.finer(() -> String.format("data  save %s to %s where id = %s", value, table, id));
+            return dialect.set(table, id, value);
+        } catch (SQLException e) {
+            LOGGER.severe(e::getMessage);
+            throw new RuntimeException("fail", e);
+        }
+    }
+
+    public void close() throws SQLException {
+        dialect.close();
+    }
+
+    public Connection getConnection() {
+        return dialect.getConnection();
+    }
 
     static class Key {
         private final String method;
         private final Object[] args;
         private final boolean setter;
+        private final boolean getter;
 
 
-        public Key(Method method, Object[] args) {
+        public Key(@NotNull Method method, Object[] args) {
             final String clazz = method.getDeclaringClass().getName();
             final String name = method.getName();
-            boolean getter = name.startsWith("get");
+            getter = name.startsWith("get");
             setter = name.startsWith("set");
 
-            this.method = getter || setter ? clazz + "." + name.substring(3) : clazz + "." + name;
+            this.method = clazz + "." + (getter || setter ? name.substring(3) : name);
             this.args = setter ? new Object[]{args[0]} : args;
-        }
-
-        public boolean isSetter() {
-            return setter;
         }
 
         @Override
@@ -63,12 +114,12 @@ public class Cache {
                     if (s.equals(key)) {
                         final Object removed = remove(entry.getKey());
                         if (removed != null) {
-                            log("removed", entry.getKey(), removed);
+                            LOGGER.finer(() -> String.format("clear %s=%s", entry.getKey(), removed));
                         }
                     }
                 }
             }
-            log("put", key, value);
+            LOGGER.finer(() -> String.format("c.put %s=%s", key, value));
             return super.put(key, value);
         }
 
@@ -76,7 +127,7 @@ public class Cache {
         public Object get(Object key) {
             final Object value = super.get(key);
             if (value != null) {
-                log("get", (Key) key, value);
+                LOGGER.finer(() -> String.format("c.get %s=%s", key, value));
             }
             return value;
         }
@@ -85,18 +136,10 @@ public class Cache {
     public static final int[] EMPTY = new int[]{};
     private static final Gson GSON = new GsonBuilder().create();
 
-    private static boolean isSetter(Method method) {
-        return method.getName().startsWith("set");
-    }
-
-    private void log(String message, Key key, Object o) {
-        System.out.println("  ".repeat(stack.size()) + message + " " + key + (o == null ? "" : "=" + o));
-    }
-
     @SuppressWarnings("unchecked")
     public <I> I proxy(Class<? extends Library<I>> clazz) {
         final Library<I> proxy = newInstance(clazz);
-        return proxy.setProxy((I) PROXIES.computeIfAbsent(clazz,
+        return proxy.setProxy(this, (I) PROXIES.computeIfAbsent(clazz,
                 c -> Proxy.newProxyInstance(
                         clazz.getClassLoader(),
                         clazz.getInterfaces(),
@@ -106,7 +149,7 @@ public class Cache {
                 )));
     }
 
-    private <I> Library<I> newInstance(Class<? extends Library<I>> clazz) {
+    private <I> @NotNull Library<I> newInstance(Class<? extends Library<I>> clazz) {
         try {
             return clazz.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
@@ -114,15 +157,24 @@ public class Cache {
         }
     }
 
+    //todo: handle cached null
     private Object invoke(Object p, Method m, Object[] a) throws InvocationTargetException, IllegalAccessException {
         try {
-            final Key key = getKey(m, a);
-            log("call", key, null);
+            final Key key = new Key(m, a);
             enter(key);
             Object value;
-            if (key.isSetter()) {
+            if (key.setter) {
+                final Map<String, Object> cell = Collections.singletonMap(key.method, a);
+                LOGGER.fine(() -> String.format("write %s", GSON.toJson(cell)));
                 cache.put(key, value = m.invoke(p, a));
+            } else if (key.getter) {
+                LOGGER.fine(() -> String.format("read  %s", key));
+                value = cache.get(key);
+                if (value == null) {
+                    cache.put(key, value = m.invoke(p, a));
+                }
             } else {
+                LOGGER.fine(() -> String.format("eval  %s", key));
                 value = cache.get(key);
                 if (value == null) {
                     cache.put(key, value = m.invoke(p, a));
@@ -132,10 +184,6 @@ public class Cache {
         } finally {
             leave();
         }
-    }
-
-    private Key getKey(Method m, Object[] a) {
-        return new Key(m, isSetter(m) ? new Object[]{a[0]} : a);
     }
 
     private void enter(Key key) {
