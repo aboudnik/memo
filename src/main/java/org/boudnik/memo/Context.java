@@ -10,11 +10,10 @@ import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.*;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class Context {
+public class Context implements AutoCloseable {
     private static final Map<Class<?>, Object> PROXIES = new HashMap<>();
     private final Dialect dialect;
 
@@ -24,7 +23,7 @@ public class Context {
         System.setProperty("java.util.logging.SimpleFormatter.format", "[%1$tF %1$tT] [%4$-7s] %5$s %n");
         Logger rootLog = Logger.getLogger("");
         rootLog.setLevel(Level.FINER);
-        rootLog.getHandlers()[0].setLevel(Level.FINER);
+        rootLog.getHandlers()[0].setLevel(Level.ALL);
         LOGGER = Logger.getLogger(Context.class.getName());
     }
 
@@ -36,26 +35,20 @@ public class Context {
         this.dialect = dialect;
     }
 
-    public Object get(String table, Object id) {
-        final Supplier<String> message = () -> String.format("data  read value from %s where id = %s", table, id);
-        try {
-            LOGGER.finer(message);
-            return dialect.get(table, id);
-        } catch (SQLException e) {
-            LOGGER.severe(e::getMessage);
-            throw new RuntimeException("fail", e);
-        }
+    public Object get(String table, Parameter... ids) {
+        LOGGER.finer(() -> String.format("data  read value from %s where id = %s", table, Arrays.toString(ids)));
+        return dialect.get(table, ids);
     }
 
-    public Object set(String table, Object id, Object value) {
-        try {
-            LOGGER.finer(() -> String.format("data  save %s to %s where id = %s", value, table, id));
-            return dialect.set(table, id, value);
-        } catch (SQLException e) {
-            LOGGER.severe(e::getMessage);
-            throw new RuntimeException("fail", e);
-        }
+    public Object set(String table, Object value, Parameter... ids) {
+        LOGGER.finer(() -> String.format("data  save %s to %s where id = %s", value, table, Arrays.toString(ids)));
+        return dialect.set(table, value, ids);
     }
+
+    public void dump(String table) {
+        dialect.dump(table);
+    }
+
 
     public void close() throws SQLException {
         dialect.close();
@@ -134,7 +127,7 @@ public class Context {
     };
 
     public static final int[] EMPTY = new int[]{};
-    private static final Gson GSON = new GsonBuilder().create();
+    public static final Gson GSON = new GsonBuilder().create();
 
     @SuppressWarnings("unchecked")
     public <I> I proxy(Class<? extends Library<I>> clazz) {
@@ -157,26 +150,28 @@ public class Context {
         }
     }
 
-    //todo: handle cached null
     private Object invoke(Object p, Method m, Object[] a) throws InvocationTargetException, IllegalAccessException {
+        final Key key = new Key(m, a);
+        enter(key);
         try {
-            final Key key = new Key(m, a);
-            enter(key);
             Object value;
-            if (key.setter) {
-                final Map<String, Object> cell = Collections.singletonMap(key.method, a);
-                LOGGER.fine(() -> String.format("write %s", GSON.toJson(cell)));
+            if (key.setter) { // check if value is the same and do nothing
+                LOGGER.fine(() -> String.format((cache.containsKey(key) ? "over  %s" : "write %s"), GSON.toJson(Collections.<String, Object>singletonMap(key.method, a))));
                 cache.put(key, value = m.invoke(p, a));
             } else if (key.getter) {
-                LOGGER.fine(() -> String.format("read  %s", key));
-                value = cache.get(key);
-                if (value == null) {
+                if (cache.containsKey(key)) {
+                    LOGGER.fine(() -> String.format("reuse %s", key));
+                    value = cache.get(key);
+                } else {
+                    LOGGER.fine(() -> String.format("read  %s", key));
                     cache.put(key, value = m.invoke(p, a));
                 }
             } else {
-                LOGGER.fine(() -> String.format("eval  %s", key));
-                value = cache.get(key);
-                if (value == null) {
+                if (cache.containsKey(key)) {
+                    LOGGER.fine(() -> String.format("reuse %s", key));
+                    value = cache.get(key);
+                } else {
+                    LOGGER.fine(() -> String.format("eval  %s", key));
                     cache.put(key, value = m.invoke(p, a));
                 }
             }

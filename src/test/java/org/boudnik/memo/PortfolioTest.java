@@ -23,13 +23,14 @@ class PortfolioTest {
         try (final PreparedStatement statement = context.getConnection().prepareStatement("drop table if exists prices")) {
             assertEquals(0, statement.executeUpdate());
         }
-        try (final PreparedStatement statement = context.getConnection().prepareStatement("create table prices (id varchar(10), value double)")) {
+        try (final PreparedStatement statement = context.getConnection().prepareStatement("create table prices (security varchar(10), \"value\" double)")) {
             assertEquals(0, statement.executeUpdate());
         }
-        try (final PreparedStatement insert = context.getConnection().prepareStatement("insert into prices values" +
-                "('MSFT', 326.19)," +
-                "('INTC', 52.86)")) {
-            assertEquals(2, insert.executeUpdate());
+        try (final PreparedStatement statement = context.getConnection().prepareStatement("drop table if exists portfolios")) {
+            assertEquals(0, statement.executeUpdate());
+        }
+        try (final PreparedStatement statement = context.getConnection().prepareStatement("create table portfolios (portfolio varchar(10), security varchar(10), \"value\" double)")) {
+            assertEquals(0, statement.executeUpdate());
         }
     }
 
@@ -41,8 +42,18 @@ class PortfolioTest {
     @Test
     void test() {
         final Portfolio portfolio = context.proxy(PortfolioImpl.class);
-        portfolio.getMarketPrice("MSFT");
-        portfolio.getMarketPrice("MSFT");
+
+        portfolio.setMarketPrice("MSFT", 326.19);
+        portfolio.setMarketPrice("INTC", 52.86);
+
+        context.dump("prices");
+
+        portfolio.setHolding("Smith", "MSFT", 10);
+        portfolio.setHolding("Smith", "INTC", 10);
+        portfolio.setHolding("Jane", "INTC", 10);
+
+        context.dump("portfolios");
+
         assertEquals(326.19 * 10, portfolio.presentValue("Smith", "MSFT"));
         assertEquals(52.86 * 10, portfolio.presentValue("Smith", "INTC"));
         assertEquals(52.86 * 10, portfolio.presentValue("Jane", "INTC"));
@@ -51,9 +62,15 @@ class PortfolioTest {
         assertThrows(Exception.class, () -> assertEquals(171.18 * 10, portfolio.presentValue("Jane", "AAPL")));
 
         portfolio.setMarketPrice("AAPL", 171.18);
+        portfolio.setHolding("Jane", "AAPL", 10);
         assertEquals(171.18 * 10, portfolio.presentValue("Jane", "AAPL"));
+
         portfolio.setMarketPrice("MSFT", 334.35);
         assertEquals(334.35 * 10, portfolio.presentValue("Smith", "MSFT"));
+        portfolio.setMarketPrice("MSFT", 334.35);
         assertEquals(334.35 * 10, portfolio.presentValue("Smith", "MSFT"));
+        portfolio.setMarketPrice("AAPL", 140.3);
+        assertEquals(140.3 * 10, portfolio.presentValue("Jane", "AAPL"));
+        assertEquals(140.3 * 10, portfolio.presentValue("Jane", "AAPL"));
     }
 }

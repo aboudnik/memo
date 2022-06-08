@@ -8,6 +8,9 @@ public interface Portfolio {
 
     double setMarketPrice(String security, double value);
 
-    double holding(String portfolio, String security);
+    double getHolding(String portfolio, String security);
 
+    double setHolding(String portfolio, String security, double amount);
+
+    void dump(String table);
 }
